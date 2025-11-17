@@ -1,0 +1,80 @@
+{
+  "name": "Multi-Architecture LLM Comparison",
+  "description": "Compare content generation across Llama, GPT-2, and Phi-2 architectures",
+  "backends": [
+    {
+      "backend_id": "llama",
+      "type": "llama",
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "use_mock": false,
+      "device": "auto",
+      "description": "Llama 3.1 8B for nuanced, context-aware generation"
+    },
+    {
+      "backend_id": "gpt2",
+      "type": "gpt",
+      "model": "gpt2",
+      "use_mock": false,
+      "device": "auto",
+      "description": "GPT-2 for baseline comparison"
+    },
+    {
+      "backend_id": "small",
+      "type": "small",
+      "model": "microsoft/phi-2",
+      "use_mock": false,
+      "device": "auto",
+      "description": "Phi-2 small model for faster generation"
+    }
+  ],
+  "agent_assignments": [
+    {
+      "agent_id": "agent_0",
+      "backend_id": "llama",
+      "persona": "Progressive Activist",
+      "objective": "Advocate for social and environmental causes",
+      "temperature": 0.8,
+      "response_style": "balanced"
+    },
+    {
+      "agent_id": "agent_1",
+      "backend_id": "llama",
+      "persona": "Tech Entrepreneur",
+      "objective": "Discuss innovation and opportunities",
+      "temperature": 0.7,
+      "response_style": "balanced"
+    },
+    {
+      "agent_id": "agent_2",
+      "backend_id": "gpt2",
+      "persona": "Academic Researcher",
+      "objective": "Provide evidence-based insights",
+      "temperature": 0.5,
+      "response_style": "balanced"
+    },
+    {
+      "agent_id": "agent_3",
+      "backend_id": "gpt2",
+      "persona": "Skeptical Journalist",
+      "objective": "Question narratives critically",
+      "temperature": 0.6,
+      "response_style": "balanced"
+    },
+    {
+      "agent_id": "agent_4",
+      "backend_id": "small",
+      "persona": "Community Organizer",
+      "objective": "Build consensus and action",
+      "temperature": 0.7,
+      "response_style": "balanced"
+    },
+    {
+      "agent_id": "agent_5",
+      "backend_id": "small",
+      "persona": "Contrarian Thinker",
+      "objective": "Challenge mainstream views",
+      "temperature": 0.8,
+      "response_style": "balanced"
+    }
+  ]
+}
