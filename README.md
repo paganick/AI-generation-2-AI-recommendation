@@ -14,6 +14,28 @@ This simulator models a three-layer system:
 
 The system captures feedback loops: recommender outputs influence what content is seen, which influences future content generation, creating complex dynamics.
 
+## 👥 Two Populations: Agents vs. Users (IMPORTANT!)
+
+The simulation models **two distinct populations** that interact differently:
+
+### 🤖 **AI Agents** (Active Content Creators)
+- LLM-powered bots (Llama, Mistral, etc.) that **create content**
+- Post original content and respond to others
+- Each has a unique persona and LLM backend
+- Probabilistically decide each round: post new (30%), respond (50%), or stay quiet (20%)
+- **These are the AI systems being studied**
+
+### 👤 **Simulated Users** (Passive Audience)
+- **Human audience members** who **consume but don't create** content
+- Receive personalized content feeds from recommender
+- Engage by "liking" content that aligns with their opinions
+- Opinions evolve based on exposure (bounded confidence model)
+- **These model how humans are influenced by AI content**
+
+**📖 For detailed explanation, see [USER_MODEL.md](USER_MODEL.md)**
+
+This separation allows studying: *How do AI content creators + recommendation algorithms shape human audience opinions?*
+
 ## Key Features
 
 - **Multi-Architecture LLM Support**: Run simulations with different LLM architectures (Llama, GPT, smaller models) generating content simultaneously
@@ -74,21 +96,28 @@ python visualize_results.py
 
 ## Scenario-Based Research Workflow (NEW! ⭐)
 
-For comprehensive research comparing LLM architectures with pre-configured scenarios and analysis tools, see **[SCENARIOS.md](SCENARIOS.md)**.
+For comprehensive research comparing LLM architectures with realistic simulation dynamics and analysis tools, see **[SCENARIOS.md](SCENARIOS.md)**.
 
-### Quick Start with Scenarios
+### Quick Start with Realistic Scenarios
 
 ```bash
 # Run both scenarios and compare (recommended)
+# Uses probabilistic agent behavior and realistic dynamics
 ./run_and_compare_scenarios.sh --rounds 10 --users 20
 
-# Or run individual scenarios
-python run_scenario.py --scenario 1 --rounds 10 --users 20  # Llama-only
-python run_scenario.py --scenario 2 --rounds 10 --users 20  # Mixed Llama+Mistral
+# Or run individual scenarios with realistic dynamics
+python run_realistic_scenario.py --scenario 1 --rounds 10 --users 20  # Llama-only
+python run_realistic_scenario.py --scenario 2 --rounds 10 --users 20  # Mixed Llama+Mistral
 
 # Comprehensive analysis with visualizations
 python analyze_scenarios.py --output-dir ./scenario1_output --compare ./scenario2_output
 ```
+
+**New Realistic Features:**
+- ✨ ALL agents create seed content at initialization (not just 2!)
+- ✨ Agents probabilistically decide to post/respond/stay quiet each round
+- ✨ Clearer separation: Agents create, Users consume
+- ✨ More realistic social media dynamics
 
 **Predefined Scenarios:**
 - **Scenario 1**: Llama-3.1-8B only (generation + recommendation) - baseline

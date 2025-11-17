@@ -191,21 +191,226 @@ class ContentGenerator:
         else:
             return self.llm
 
+    def generate_seed_content(self, topics: List[str], posts_per_agent: int = 1) -> List[ContentItem]:
+        """
+        Generate initial seed content from ALL agents.
+        Each agent creates 1-2 posts to initialize the content pool.
+
+        Args:
+            topics: List of topics to post about
+            posts_per_agent: Number of posts each agent creates (default: 1)
+
+        Returns:
+            List of created content items
+        """
+        content_items = []
+        timestamp = 0.0
+        current_round = 0
+
+        print(f"\n→ INITIALIZATION: All agents creating seed content")
+        print(f"   Each of {len(self.agents)} agents will create {posts_per_agent} post(s)")
+
+        for agent_id, agent in self.agents.items():
+            # Each agent posts about random topics
+            agent_topics = np.random.choice(topics, size=min(posts_per_agent, len(topics)), replace=False)
+
+            for topic in agent_topics:
+                backend = self._get_backend_for_agent(agent_id)
+                prompt = self._create_generation_prompt(agent, topic)
+
+                print(f"  {agent_id} ({agent.persona[:20]}...) → {topic}")
+
+                text = backend.generate(prompt, temperature=agent.temperature)
+
+                content_id = f"c_seed_{self.generation_count}"
+                item = ContentItem(
+                    id=content_id,
+                    author_id=agent_id,
+                    text=text,
+                    timestamp=timestamp,
+                    round_created=current_round,
+                    topic=topic,
+                    llm_architecture=backend.architecture_type,
+                    llm_model=backend.model_name
+                )
+
+                content_items.append(item)
+                agent.content_history.append(content_id)
+                self.generation_count += 1
+                timestamp += 1.0
+
+        # Save to tracker
+        self.data_tracker.all_content.extend(content_items)
+        if current_round not in self.data_tracker.round_data['content_generated']:
+            self.data_tracker.round_data['content_generated'][current_round] = []
+        self.data_tracker.round_data['content_generated'][current_round].extend(
+            [c.id for c in content_items]
+        )
+
+        print(f"  ✓ Generated {len(content_items)} seed posts from {len(self.agents)} agents\n")
+        return content_items
+
+    def agent_decide_actions(self, content_pool: List[ContentItem],
+                            engagement_threshold: int = 2) -> Dict[str, Dict]:
+        """
+        Each agent probabilistically decides what to do this round.
+
+        Decision probabilities:
+        - Post new content: 30%
+        - Respond to engaging content: 50% (if engaging content exists)
+        - Stay quiet: 20%
+
+        Args:
+            content_pool: All available content
+            engagement_threshold: Minimum engagement score to consider responding
+
+        Returns:
+            Dict mapping agent_id to action decision
+        """
+        decisions = {}
+
+        # Find engaging content (worth responding to)
+        engaging_content = [c for c in content_pool if c.engagement_score >= engagement_threshold]
+
+        for agent_id in self.agents.keys():
+            decision = {
+                'post_new': False,
+                'respond': False,
+                'respond_to': None,
+                'new_topic': None
+            }
+
+            # Roll for action
+            action_roll = np.random.random()
+
+            if action_roll < 0.3:
+                # Post new content (30%)
+                decision['post_new'] = True
+                # Pick a random topic they haven't posted much about
+                decision['new_topic'] = np.random.choice(['climate change', 'technology', 'healthcare',
+                                                         'education', 'politics', 'economics'])
+
+            elif action_roll < 0.8 and engaging_content:
+                # Respond to content (50%, if engaging content exists)
+                decision['respond'] = True
+                decision['respond_to'] = np.random.choice(engaging_content)
+
+            # else: stay quiet (20%)
+
+            decisions[agent_id] = decision
+
+        return decisions
+
+    def generate_round_content(self, current_round: int,
+                              action_decisions: Dict[str, Dict]) -> List[ContentItem]:
+        """
+        Generate content based on agent decisions.
+
+        Args:
+            current_round: Current simulation round
+            action_decisions: Dict of agent decisions from agent_decide_actions()
+
+        Returns:
+            List of newly created content items
+        """
+        content_items = []
+        timestamp = current_round * 100.0
+
+        # Count actions for reporting
+        n_posts = sum(1 for d in action_decisions.values() if d['post_new'])
+        n_responses = sum(1 for d in action_decisions.values() if d['respond'])
+        n_quiet = len(action_decisions) - n_posts - n_responses
+
+        print(f"\n→ CONTENT GENERATION (Round {current_round})")
+        print(f"   {n_posts} agents posting new content, {n_responses} responding, {n_quiet} staying quiet")
+
+        for agent_id, decision in action_decisions.items():
+            agent = self.agents[agent_id]
+            backend = self._get_backend_for_agent(agent_id)
+
+            # Post new content
+            if decision['post_new']:
+                topic = decision['new_topic']
+                prompt = self._create_generation_prompt(agent, topic)
+
+                print(f"  📝 {agent_id} posting about '{topic}'")
+
+                text = backend.generate(prompt, temperature=agent.temperature)
+
+                content_id = f"c_{current_round}_{self.generation_count}"
+                item = ContentItem(
+                    id=content_id,
+                    author_id=agent_id,
+                    text=text,
+                    timestamp=timestamp,
+                    round_created=current_round,
+                    topic=topic,
+                    llm_architecture=backend.architecture_type,
+                    llm_model=backend.model_name
+                )
+
+                content_items.append(item)
+                agent.content_history.append(content_id)
+                self.generation_count += 1
+                timestamp += 1.0
+
+            # Respond to content
+            if decision['respond']:
+                target = decision['respond_to']
+                prompt = self._create_response_prompt(agent, target)
+
+                print(f"  💬 {agent_id} responding to {target.id[:10]}...")
+
+                text = backend.generate(prompt, temperature=agent.temperature)
+
+                content_id = f"c_{current_round}_{self.generation_count}"
+                item = ContentItem(
+                    id=content_id,
+                    author_id=agent_id,
+                    text=text,
+                    timestamp=timestamp,
+                    round_created=current_round,
+                    parent_id=target.id,
+                    topic=target.topic,
+                    llm_architecture=backend.architecture_type,
+                    llm_model=backend.model_name
+                )
+
+                content_items.append(item)
+                agent.content_history.append(content_id)
+                self.generation_count += 1
+                timestamp += 1.0
+
+        # Save to tracker
+        self.data_tracker.all_content.extend(content_items)
+        if current_round not in self.data_tracker.round_data['content_generated']:
+            self.data_tracker.round_data['content_generated'][current_round] = {}
+        self.data_tracker.round_data['content_generated'][current_round] = [c.id for c in content_items]
+
+        print(f"  ✓ Generated {len(content_items)} content items\n")
+        return content_items
+
+    # Keep old methods for backward compatibility (marked as deprecated)
     def generate_initial_posts(self, topics: List[str], current_round: int,
                                posts_per_topic: int = 2) -> List[ContentItem]:
         """
+        DEPRECATED: Use generate_seed_content() instead.
         Generate initial posts on given topics.
-        Each agent is prompted with their persona and a topic.
         """
+        print("  ⚠️  Warning: generate_initial_posts() is deprecated. Use generate_seed_content() instead.")
         content_items = []
-        timestamp = current_round * 100.0  # Simple timestamp
-        
+        timestamp = current_round * 100.0
+
         print(f"\n→ Generating initial posts for round {current_round}")
-        
+
         for topic in topics:
-            # Select agents for this topic
-            selected_agents = list(self.agents.keys())[:posts_per_topic]
-            
+            # FIX: Randomly select agents instead of always picking first 2
+            selected_agents = np.random.choice(
+                list(self.agents.keys()),
+                size=min(posts_per_topic, len(self.agents)),
+                replace=False
+            )
+
             for agent_id in selected_agents:
                 agent = self.agents[agent_id]
 
