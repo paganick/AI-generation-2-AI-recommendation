@@ -293,6 +293,86 @@ class GPTStyleBackend(BaseLLMBackend):
         return [self.generate(p, temperature, max_new_tokens) for p in prompts]
 
 
+class MistralBackend(BaseLLMBackend):
+    """Backend for Mistral models."""
+
+    def __init__(self, model_name: str = "mistralai/Mistral-7B-Instruct-v0.2", device: str = "auto"):
+        """
+        Initialize Mistral backend.
+
+        Args:
+            model_name: HuggingFace model identifier for Mistral models
+            device: Device to run on ('cuda', 'cpu', or 'auto')
+        """
+        super().__init__(model_name, architecture_type="mistral")
+        self.device = device
+        self.model = None
+        self.tokenizer = None
+
+        print(f"[Mistral Backend] Initializing {model_name}...")
+        self._load_model()
+
+    def _load_model(self):
+        """Load Mistral model and tokenizer."""
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is required for Mistral backend. Install with: pip install torch transformers")
+
+        try:
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map=self.device,
+                low_cpu_mem_usage=True
+            )
+
+            self.model.eval()
+            print(f"[Mistral Backend] Model loaded successfully")
+
+        except Exception as e:
+            print(f"[Mistral Backend] Error loading model: {e}")
+            raise
+
+    def generate(self, prompt: str, temperature: float = 0.7,
+                 max_new_tokens: int = 150, top_p: float = 0.9) -> str:
+        """Generate text from prompt."""
+        if self.model is None:
+            return "[Model not loaded]"
+
+        inputs = self.tokenizer(prompt, return_tensors="pt", padding=True)
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=temperature > 0,
+                pad_token_id=self.tokenizer.pad_token_id
+            )
+
+        generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        response = generated_text[len(prompt):].strip()
+        response = self._clean_response(response)
+
+        # Update statistics
+        self.generation_count += 1
+        self.total_tokens_generated += len(self.tokenizer.encode(response))
+
+        return response
+
+    def batch_generate(self, prompts: List[str], temperature: float = 0.7,
+                      max_new_tokens: int = 150) -> List[str]:
+        """Generate responses for multiple prompts."""
+        return [self.generate(p, temperature, max_new_tokens) for p in prompts]
+
+
 class SmallModelBackend(BaseLLMBackend):
     """Backend for smaller, faster models (Phi, TinyLlama, etc.)."""
 
@@ -490,7 +570,7 @@ def get_llm_backend(use_mock: bool = False, model_name: str = "meta-llama/Llama-
     Args:
         use_mock: If True, use mock backend for testing
         model_name: Model to load (if not using mock)
-        backend_type: Type of backend ("llama", "gpt", "small", "mock")
+        backend_type: Type of backend ("llama", "mistral", "gpt", "small", "mock")
 
     Returns:
         LLM backend instance
@@ -500,6 +580,8 @@ def get_llm_backend(use_mock: bool = False, model_name: str = "meta-llama/Llama-
 
     if backend_type == "llama":
         return LlamaBackend(model_name=model_name)
+    elif backend_type == "mistral":
+        return MistralBackend(model_name=model_name)
     elif backend_type == "gpt":
         return GPTStyleBackend(model_name=model_name)
     elif backend_type == "small":
