@@ -1,0 +1,69 @@
+{
+  "name": "Scenario 1: Llama-3.1-8B Only",
+  "description": "All content generation and recommendation using Llama-3.1-8B-Instruct",
+  "backends": [
+    {
+      "backend_id": "llama",
+      "type": "llama",
+      "model": "meta-llama/Llama-3.1-8B-Instruct",
+      "use_mock": false,
+      "device": "auto",
+      "description": "Llama-3.1-8B for all agents"
+    }
+  ],
+  "agent_assignments": [
+    {
+      "agent_id": "agent_0",
+      "backend_id": "llama",
+      "persona": "Progressive Activist",
+      "objective": "Advocate for social and environmental causes",
+      "temperature": 0.8,
+      "response_style": "passionate"
+    },
+    {
+      "agent_id": "agent_1",
+      "backend_id": "llama",
+      "persona": "Tech Entrepreneur",
+      "objective": "Discuss innovation and business opportunities",
+      "temperature": 0.7,
+      "response_style": "optimistic"
+    },
+    {
+      "agent_id": "agent_2",
+      "backend_id": "llama",
+      "persona": "Academic Researcher",
+      "objective": "Provide evidence-based analytical insights",
+      "temperature": 0.5,
+      "response_style": "analytical"
+    },
+    {
+      "agent_id": "agent_3",
+      "backend_id": "llama",
+      "persona": "Skeptical Journalist",
+      "objective": "Question narratives and demand accountability",
+      "temperature": 0.6,
+      "response_style": "critical"
+    },
+    {
+      "agent_id": "agent_4",
+      "backend_id": "llama",
+      "persona": "Community Organizer",
+      "objective": "Build consensus and mobilize action",
+      "temperature": 0.7,
+      "response_style": "collaborative"
+    },
+    {
+      "agent_id": "agent_5",
+      "backend_id": "llama",
+      "persona": "Contrarian Thinker",
+      "objective": "Challenge mainstream narratives",
+      "temperature": 0.8,
+      "response_style": "provocative"
+    }
+  ],
+  "recommender": {
+    "type": "llm",
+    "backend_id": "llama",
+    "use_personalization": true
+  }
+}

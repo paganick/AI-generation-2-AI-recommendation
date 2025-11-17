@@ -72,6 +72,38 @@ python run_simulation.py --rounds 5 --agents 6 --users 10 --recommender diversit
 python visualize_results.py
 ```
 
+## Scenario-Based Research Workflow (NEW! ⭐)
+
+For comprehensive research comparing LLM architectures with pre-configured scenarios and analysis tools, see **[SCENARIOS.md](SCENARIOS.md)**.
+
+### Quick Start with Scenarios
+
+```bash
+# Run both scenarios and compare (recommended)
+./run_and_compare_scenarios.sh --rounds 10 --users 20
+
+# Or run individual scenarios
+python run_scenario.py --scenario 1 --rounds 10 --users 20  # Llama-only
+python run_scenario.py --scenario 2 --rounds 10 --users 20  # Mixed Llama+Mistral
+
+# Comprehensive analysis with visualizations
+python analyze_scenarios.py --output-dir ./scenario1_output --compare ./scenario2_output
+```
+
+**Predefined Scenarios:**
+- **Scenario 1**: Llama-3.1-8B only (generation + recommendation) - baseline
+- **Scenario 2**: Mixed Llama + Mistral-7B generation, Llama recommendation
+
+**Comprehensive Analysis Metrics:**
+- ✅ Content Diversity (topic distribution, semantic similarity, novelty)
+- ✅ Promotion Patterns (visibility, filter bubbles)
+- ✅ Sentiment Dynamics (temporal evolution, extremity trends)
+- ✅ Engagement Patterns (network formation, virality, echo chambers)
+- ✅ Polarization Indices (opinion clustering, interaction frequency)
+- ✅ Architecture Effects (performance comparison, statistical tests)
+
+**See [SCENARIOS.md](SCENARIOS.md) for full documentation.**
+
 ## Multi-LLM Architecture (NEW!)
 
 The simulator now supports **multiple LLM architectures coexisting** in the same simulation. This allows you to:
