@@ -26,7 +26,9 @@ class ContentItem:
     engagement_score: float = 0.0
     total_views: int = 0
     total_likes: int = 0
-    
+    llm_architecture: Optional[str] = None  # NEW: Track which LLM generated this content
+    llm_model: Optional[str] = None  # NEW: Track specific model used
+
     def to_dict(self):
         d = asdict(self)
         return d
@@ -42,7 +44,8 @@ class Agent:
     response_style: str = "balanced"
     preferred_topics: List[str] = field(default_factory=list)
     content_history: List[str] = field(default_factory=list)
-    
+    llm_backend_id: Optional[str] = None  # NEW: Which LLM backend this agent uses
+
     def to_dict(self):
         return asdict(self)
 
@@ -160,16 +163,34 @@ class EnhancedDataTracker:
 
 class ContentGenerator:
     """Manages AI agents that generate content."""
-    
+
     def __init__(self, agents: List[Agent], llm_backend, data_tracker: EnhancedDataTracker):
+        """
+        Initialize ContentGenerator.
+
+        Args:
+            agents: List of Agent objects
+            llm_backend: Either a single LLM backend OR a MultiLLMManager
+            data_tracker: EnhancedDataTracker instance
+        """
         self.agents = {agent.id: agent for agent in agents}
         self.llm = llm_backend
         self.generation_count = 0
         self.data_tracker = data_tracker
-        
+
+        # Check if we're using MultiLLMManager
+        self.is_multi_llm = hasattr(llm_backend, 'get_backend_for_agent')
+
         # Store agents in tracker
         self.data_tracker.all_agents = self.agents
-    
+
+    def _get_backend_for_agent(self, agent_id: str):
+        """Get the appropriate LLM backend for a given agent."""
+        if self.is_multi_llm:
+            return self.llm.get_backend_for_agent(agent_id)
+        else:
+            return self.llm
+
     def generate_initial_posts(self, topics: List[str], current_round: int,
                                posts_per_topic: int = 2) -> List[ContentItem]:
         """
@@ -187,14 +208,17 @@ class ContentGenerator:
             
             for agent_id in selected_agents:
                 agent = self.agents[agent_id]
-                
+
+                # Get the appropriate backend for this agent
+                backend = self._get_backend_for_agent(agent_id)
+
                 # Create generation prompt
                 prompt = self._create_generation_prompt(agent, topic)
                 print(f"  Agent {agent_id} ({agent.persona}) posting about '{topic}'...")
-                
+
                 # Generate content
-                text = self.llm.generate(prompt, temperature=agent.temperature)
-                
+                text = backend.generate(prompt, temperature=agent.temperature)
+
                 # Create content item
                 content_id = f"c_{current_round}_{self.generation_count}"
                 item = ContentItem(
@@ -203,9 +227,11 @@ class ContentGenerator:
                     text=text,
                     timestamp=timestamp,
                     round_created=current_round,
-                    topic=topic
+                    topic=topic,
+                    llm_architecture=backend.architecture_type,
+                    llm_model=backend.model_name
                 )
-                
+
                 content_items.append(item)
                 agent.content_history.append(content_id)
                 self.generation_count += 1
@@ -248,15 +274,18 @@ class ContentGenerator:
         
         for agent_id in responding_agents:
             agent = self.agents[agent_id]
-            
+
+            # Get the appropriate backend for this agent
+            backend = self._get_backend_for_agent(agent_id)
+
             # Select a random item from feed to respond to
             target_item = np.random.choice(feed_items)
-            
+
             prompt = self._create_response_prompt(agent, target_item)
             print(f"  Agent {agent_id} responding to {target_item.id[:10]}...")
-            
-            text = self.llm.generate(prompt, temperature=agent.temperature)
-            
+
+            text = backend.generate(prompt, temperature=agent.temperature)
+
             content_id = f"c_{current_round}_{self.generation_count}"
             response = ContentItem(
                 id=content_id,
@@ -265,9 +294,11 @@ class ContentGenerator:
                 timestamp=timestamp,
                 round_created=current_round,
                 parent_id=target_item.id,
-                topic=target_item.topic
+                topic=target_item.topic,
+                llm_architecture=backend.architecture_type,
+                llm_model=backend.model_name
             )
-            
+
             responses.append(response)
             agent.content_history.append(content_id)
             self.generation_count += 1

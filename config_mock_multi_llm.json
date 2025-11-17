@@ -1,0 +1,80 @@
+{
+  "name": "Multi-LLM Social Media Simulation",
+  "description": "Simulation with different LLM architectures generating content from diverse perspectives",
+  "backends": [
+    {
+      "backend_id": "mock_general",
+      "type": "mock",
+      "model": "mock",
+      "use_mock": true,
+      "device": "auto",
+      "description": "Mock backend for general agents"
+    },
+    {
+      "backend_id": "mock_creative",
+      "type": "mock",
+      "model": "mock-creative",
+      "use_mock": true,
+      "device": "auto",
+      "description": "Mock backend for creative agents"
+    },
+    {
+      "backend_id": "mock_analytical",
+      "type": "mock",
+      "model": "mock-analytical",
+      "use_mock": true,
+      "device": "auto",
+      "description": "Mock backend for analytical agents"
+    }
+  ],
+  "agent_assignments": [
+    {
+      "agent_id": "agent_0",
+      "backend_id": "mock_general",
+      "persona": "Progressive Activist",
+      "objective": "Advocate for social and environmental causes",
+      "temperature": 0.8,
+      "response_style": "passionate"
+    },
+    {
+      "agent_id": "agent_1",
+      "backend_id": "mock_creative",
+      "persona": "Tech Entrepreneur",
+      "objective": "Discuss innovation and business opportunities",
+      "temperature": 0.7,
+      "response_style": "optimistic"
+    },
+    {
+      "agent_id": "agent_2",
+      "backend_id": "mock_analytical",
+      "persona": "Academic Researcher",
+      "objective": "Provide evidence-based analytical insights",
+      "temperature": 0.5,
+      "response_style": "analytical"
+    },
+    {
+      "agent_id": "agent_3",
+      "backend_id": "mock_general",
+      "persona": "Skeptical Journalist",
+      "objective": "Question narratives and demand accountability",
+      "temperature": 0.6,
+      "response_style": "critical"
+    },
+    {
+      "agent_id": "agent_4",
+      "backend_id": "mock_creative",
+      "persona": "Community Organizer",
+      "objective": "Build consensus and mobilize action",
+      "temperature": 0.7,
+      "response_style": "collaborative"
+    },
+    {
+      "agent_id": "agent_5",
+      "backend_id": "mock_general",
+      "persona": "Contrarian Thinker",
+      "objective": "Challenge mainstream narratives",
+      "temperature": 0.8,
+      "response_style": "provocative"
+    }
+  ]
+}
