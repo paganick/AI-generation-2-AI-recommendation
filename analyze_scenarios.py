@@ -642,6 +642,27 @@ class ScenarioAnalyzer:
     # MAIN ANALYSIS RUNNER
     # =================================================================
 
+    def _sanitize_for_json(self, obj):
+        """
+        Recursively sanitize data for JSON serialization.
+        Converts tuple keys to strings and handles numpy/pandas types.
+        """
+        if isinstance(obj, dict):
+            return {
+                str(k) if isinstance(k, tuple) else k: self._sanitize_for_json(v)
+                for k, v in obj.items()
+            }
+        elif isinstance(obj, (list, tuple)):
+            return [self._sanitize_for_json(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.floating)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif pd.isna(obj):
+            return None
+        else:
+            return obj
+
     def run_full_analysis(self, save_results: bool = True) -> Dict:
         """Run complete analysis suite."""
         print("\n" + "="*70)
@@ -663,8 +684,10 @@ class ScenarioAnalyzer:
         # Save results
         if save_results:
             results_file = self.output_dir / "comprehensive_analysis.json"
+            # Sanitize results for JSON serialization
+            sanitized_results = self._sanitize_for_json(all_results)
             with open(results_file, 'w') as f:
-                json.dump(all_results, f, indent=2, default=str)
+                json.dump(sanitized_results, f, indent=2, default=str)
             print(f"\n✓ Analysis results saved to {results_file}")
 
         return all_results
