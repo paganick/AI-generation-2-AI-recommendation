@@ -471,13 +471,23 @@ class ScenarioAnalyzer:
             'total_likes': 'sum'
         })
 
-        # Merge with agent info to get architecture
-        content_by_agent_with_arch = content_by_agent.merge(
-            self.agents_df[['id', 'llm_backend_id']],
-            left_index=True,
-            right_on='id',
-            how='left'
-        )
+        # Flatten multi-level columns for easier handling
+        content_by_agent_flat = content_by_agent.copy()
+        content_by_agent_flat.columns = ['_'.join(col).strip() for col in content_by_agent_flat.columns.values]
+        content_by_agent_flat = content_by_agent_flat.reset_index()
+
+        # Merge with agent info to get architecture (if available)
+        if 'llm_backend_id' in self.agents_df.columns:
+            content_by_agent_with_arch = content_by_agent_flat.merge(
+                self.agents_df[['id', 'llm_backend_id']],
+                left_on='author_id',
+                right_on='id',
+                how='left'
+            )
+            print(f"\nAgent-Backend Mapping:")
+            for _, row in content_by_agent_with_arch.iterrows():
+                if pd.notna(row.get('llm_backend_id')):
+                    print(f"  {row['author_id']} uses {row['llm_backend_id']} backend")
 
         print("\nTop Performing Agents:")
         top_agents = content_by_agent.nlargest(5, ('engagement_score', 'sum'))
