@@ -23,6 +23,29 @@ from scipy.spatial.distance import cosine
 import warnings
 warnings.filterwarnings('ignore')
 
+
+def sanitize_for_json(obj):
+    """
+    Recursively sanitize data for JSON serialization.
+    Converts tuple keys to strings and handles numpy/pandas types.
+    """
+    if isinstance(obj, dict):
+        return {
+            str(k) if isinstance(k, tuple) else k: sanitize_for_json(v)
+            for k, v in obj.items()
+        }
+    elif isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.floating)):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
+
+
 # Optional: sentence transformers for semantic similarity
 try:
     from sentence_transformers import SentenceTransformer
@@ -498,6 +521,319 @@ class ScenarioAnalyzer:
         return results
 
     # =================================================================
+    # 7. RECOMMENDATION-TOPIC-ENGAGEMENT CORRELATIONS ANALYSIS
+    # =================================================================
+
+    def analyze_recommendation_topic_engagement_correlations(self) -> Dict:
+        """
+        Analyze correlations between recommendations, topics, and engagement.
+
+        Investigates:
+        - Which topics get recommended most frequently
+        - Engagement rates by topic
+        - Correlation between topic diversity in feeds and user engagement
+        """
+        print("\n" + "="*70)
+        print("RECOMMENDATION-TOPIC-ENGAGEMENT CORRELATIONS ANALYSIS")
+        print("="*70)
+
+        results = {}
+
+        # Analyze topic distribution in recommendations
+        recommended_content_ids = set()
+        topic_recommendation_counts = Counter()
+
+        for round_str, feeds in self.feed_assignments.items():
+            for user_id, content_ids in feeds.items():
+                for content_id in content_ids:
+                    recommended_content_ids.add(content_id)
+                    content_row = self.content_df[self.content_df['id'] == content_id]
+                    if not content_row.empty:
+                        topic = content_row.iloc[0]['topic']
+                        topic_recommendation_counts[topic] += 1
+
+        results['topic_recommendation_counts'] = dict(topic_recommendation_counts)
+
+        print("\nTopic Recommendation Frequency:")
+        total_recommendations = sum(topic_recommendation_counts.values())
+        for topic, count in topic_recommendation_counts.most_common():
+            percentage = (count / total_recommendations * 100) if total_recommendations > 0 else 0
+            print(f"  {topic}: {count} recommendations ({percentage:.1f}%)")
+
+        # Analyze engagement by topic
+        topic_engagement = self.content_df.groupby('topic').agg({
+            'engagement_score': ['mean', 'std', 'sum'],
+            'total_views': ['mean', 'sum'],
+            'total_likes': ['mean', 'sum']
+        })
+        results['topic_engagement'] = topic_engagement.to_dict()
+
+        print("\nEngagement Metrics by Topic:")
+        print(topic_engagement)
+
+        # Calculate correlation between recommendation frequency and engagement
+        topic_stats = []
+        for topic in self.content_df['topic'].unique():
+            topic_content = self.content_df[self.content_df['topic'] == topic]
+            rec_count = topic_recommendation_counts.get(topic, 0)
+            avg_engagement = topic_content['engagement_score'].mean()
+            avg_views = topic_content['total_views'].mean()
+            avg_likes = topic_content['total_likes'].mean()
+
+            topic_stats.append({
+                'topic': topic,
+                'recommendation_count': rec_count,
+                'avg_engagement': avg_engagement,
+                'avg_views': avg_views,
+                'avg_likes': avg_likes
+            })
+
+        topic_stats_df = pd.DataFrame(topic_stats)
+
+        # Correlation between recommendation frequency and engagement
+        if len(topic_stats_df) > 1:
+            corr_engagement = topic_stats_df['recommendation_count'].corr(topic_stats_df['avg_engagement'])
+            corr_views = topic_stats_df['recommendation_count'].corr(topic_stats_df['avg_views'])
+            corr_likes = topic_stats_df['recommendation_count'].corr(topic_stats_df['avg_likes'])
+
+            results['correlation_rec_engagement'] = float(corr_engagement) if not pd.isna(corr_engagement) else None
+            results['correlation_rec_views'] = float(corr_views) if not pd.isna(corr_views) else None
+            results['correlation_rec_likes'] = float(corr_likes) if not pd.isna(corr_likes) else None
+
+            print(f"\nCorrelations between Recommendation Frequency and Engagement:")
+            print(f"  Rec Frequency ↔ Engagement Score: {corr_engagement:.3f}")
+            print(f"  Rec Frequency ↔ Views: {corr_views:.3f}")
+            print(f"  Rec Frequency ↔ Likes: {corr_likes:.3f}")
+
+        # Analyze topic diversity in user feeds
+        user_topic_diversity = {}
+        for round_str, feeds in self.feed_assignments.items():
+            for user_id, content_ids in feeds.items():
+                topics_in_feed = []
+                for content_id in content_ids:
+                    content_row = self.content_df[self.content_df['id'] == content_id]
+                    if not content_row.empty:
+                        topics_in_feed.append(content_row.iloc[0]['topic'])
+
+                if len(topics_in_feed) > 0:
+                    # Calculate topic entropy for this feed
+                    topic_counts = Counter(topics_in_feed)
+                    proportions = [count/len(topics_in_feed) for count in topic_counts.values()]
+                    feed_entropy = stats.entropy(proportions)
+
+                    if user_id not in user_topic_diversity:
+                        user_topic_diversity[user_id] = []
+                    user_topic_diversity[user_id].append(feed_entropy)
+
+        avg_user_topic_diversity = {
+            user_id: float(np.mean(diversities))
+            for user_id, diversities in user_topic_diversity.items()
+        }
+        results['avg_user_topic_diversity'] = avg_user_topic_diversity
+        results['overall_avg_topic_diversity'] = float(np.mean(list(avg_user_topic_diversity.values())))
+
+        print(f"\nAverage Topic Diversity in User Feeds: {results['overall_avg_topic_diversity']:.3f}")
+        print(f"  (higher = more diverse topics in recommendations)")
+
+        return results
+
+    # =================================================================
+    # 8. LLM FAVORITISM IN MIXED SCENARIOS ANALYSIS
+    # =================================================================
+
+    def analyze_llm_favoritism_in_recommendations(self) -> Dict:
+        """
+        Analyze whether the recommendation system disproportionately favors
+        content from specific LLM architectures in mixed scenarios.
+
+        Investigates:
+        - Distribution of recommended content by LLM architecture
+        - Whether favoritism correlates with content characteristics (topic, sentiment, etc.)
+        - Exposure bias in mixed-LLM scenarios
+        """
+        print("\n" + "="*70)
+        print("LLM FAVORITISM IN RECOMMENDATIONS ANALYSIS")
+        print("="*70)
+
+        results = {}
+
+        # Check if this is a mixed scenario
+        architectures = self.content_df['llm_architecture'].unique()
+        if len(architectures) <= 1:
+            print("\nThis is not a mixed-LLM scenario (only one architecture detected).")
+            print("Favoritism analysis requires multiple LLM architectures.")
+            results['is_mixed_scenario'] = False
+            return results
+
+        results['is_mixed_scenario'] = True
+        results['architectures'] = list(architectures)
+
+        print(f"\nDetected mixed scenario with architectures: {', '.join(architectures)}")
+
+        # Content generation distribution (baseline)
+        content_by_arch = self.content_df['llm_architecture'].value_counts()
+        total_content = len(self.content_df)
+        baseline_proportions = {arch: count/total_content for arch, count in content_by_arch.items()}
+
+        print("\nBaseline Content Generation by Architecture:")
+        for arch, count in content_by_arch.items():
+            print(f"  {arch}: {count} items ({baseline_proportions[arch]*100:.1f}%)")
+
+        results['baseline_proportions'] = baseline_proportions
+
+        # Recommendation distribution
+        recommended_content_ids = []
+        for round_str, feeds in self.feed_assignments.items():
+            for user_id, content_ids in feeds.items():
+                recommended_content_ids.extend(content_ids)
+
+        # Get architectures of recommended content
+        recommended_arch_counts = Counter()
+        for content_id in recommended_content_ids:
+            content_row = self.content_df[self.content_df['id'] == content_id]
+            if not content_row.empty:
+                arch = content_row.iloc[0]['llm_architecture']
+                recommended_arch_counts[arch] += 1
+
+        total_recommendations = sum(recommended_arch_counts.values())
+        recommendation_proportions = {
+            arch: count/total_recommendations
+            for arch, count in recommended_arch_counts.items()
+        }
+
+        print("\nRecommendation Distribution by Architecture:")
+        for arch, count in recommended_arch_counts.items():
+            print(f"  {arch}: {count} recommendations ({recommendation_proportions[arch]*100:.1f}%)")
+
+        results['recommendation_proportions'] = recommendation_proportions
+
+        # Calculate favoritism bias (difference from baseline)
+        favoritism_bias = {}
+        print("\nFavoritism Bias (Recommendation % - Generation %):")
+        for arch in architectures:
+            baseline = baseline_proportions.get(arch, 0)
+            recommended = recommendation_proportions.get(arch, 0)
+            bias = recommended - baseline
+            favoritism_bias[arch] = float(bias)
+
+            bias_direction = "favored" if bias > 0 else "disfavored" if bias < 0 else "neutral"
+            print(f"  {arch}: {bias:+.1%} ({bias_direction})")
+
+        results['favoritism_bias'] = favoritism_bias
+
+        # Statistical significance test (Chi-square test)
+        expected_counts = [baseline_proportions.get(arch, 0) * total_recommendations for arch in architectures]
+        observed_counts = [recommended_arch_counts.get(arch, 0) for arch in architectures]
+
+        if all(c > 5 for c in expected_counts):  # Chi-square validity check
+            chi2_stat, p_value = stats.chisquare(observed_counts, expected_counts)
+            results['chi2_statistic'] = float(chi2_stat)
+            results['chi2_pvalue'] = float(p_value)
+
+            print(f"\nChi-Square Test for Favoritism:")
+            print(f"  χ² = {chi2_stat:.3f}, p = {p_value:.4f}")
+            print(f"  {'Significant' if p_value < 0.05 else 'Not significant'} favoritism detected")
+
+        # Analyze favoritism by topic
+        print("\nFavoritism by Topic:")
+        topic_arch_recommendations = defaultdict(Counter)
+
+        for content_id in recommended_content_ids:
+            content_row = self.content_df[self.content_df['id'] == content_id]
+            if not content_row.empty:
+                arch = content_row.iloc[0]['llm_architecture']
+                topic = content_row.iloc[0]['topic']
+                topic_arch_recommendations[topic][arch] += 1
+
+        topic_favoritism = {}
+        for topic, arch_counts in topic_arch_recommendations.items():
+            total_topic_recs = sum(arch_counts.values())
+            topic_proportions = {
+                arch: count/total_topic_recs
+                for arch, count in arch_counts.items()
+            }
+            topic_favoritism[topic] = topic_proportions
+
+            print(f"\n  Topic: {topic}")
+            for arch, proportion in topic_proportions.items():
+                baseline = baseline_proportions.get(arch, 0)
+                bias = proportion - baseline
+                print(f"    {arch}: {proportion*100:.1f}% (bias: {bias:+.1%})")
+
+        results['favoritism_by_topic'] = topic_favoritism
+
+        # Analyze favoritism by sentiment
+        print("\nFavoritism by Sentiment Quartile:")
+        try:
+            self.content_df['sentiment_quartile'] = pd.qcut(
+                self.content_df['sentiment_score'],
+                q=4,
+                labels=['Q1 (Most Negative)', 'Q2', 'Q3', 'Q4 (Most Positive)'],
+                duplicates='drop'
+            )
+        except ValueError:
+            # If we can't create 4 quartiles, use fewer bins
+            self.content_df['sentiment_quartile'] = pd.qcut(
+                self.content_df['sentiment_score'],
+                q=4,
+                duplicates='drop'
+            )
+
+        sentiment_arch_recommendations = defaultdict(Counter)
+        for content_id in recommended_content_ids:
+            content_row = self.content_df[self.content_df['id'] == content_id]
+            if not content_row.empty:
+                arch = content_row.iloc[0]['llm_architecture']
+                sentiment_q = content_row.iloc[0]['sentiment_quartile']
+                if pd.notna(sentiment_q):
+                    sentiment_arch_recommendations[sentiment_q][arch] += 1
+
+        sentiment_favoritism = {}
+        for sentiment_q, arch_counts in sentiment_arch_recommendations.items():
+            total_sentiment_recs = sum(arch_counts.values())
+            sentiment_proportions = {
+                arch: count/total_sentiment_recs
+                for arch, count in arch_counts.items()
+            }
+            sentiment_favoritism[str(sentiment_q)] = sentiment_proportions
+
+            print(f"\n  Sentiment: {sentiment_q}")
+            for arch, proportion in sentiment_proportions.items():
+                baseline = baseline_proportions.get(arch, 0)
+                bias = proportion - baseline
+                print(f"    {arch}: {proportion*100:.1f}% (bias: {bias:+.1%})")
+
+        results['favoritism_by_sentiment'] = sentiment_favoritism
+
+        # Analyze engagement outcomes of favoritism
+        arch_engagement_in_recommendations = {}
+        for arch in architectures:
+            arch_recommended_ids = [
+                content_id for content_id in recommended_content_ids
+                if not self.content_df[self.content_df['id'] == content_id].empty
+                and self.content_df[self.content_df['id'] == content_id].iloc[0]['llm_architecture'] == arch
+            ]
+
+            if arch_recommended_ids:
+                arch_recommended_content = self.content_df[self.content_df['id'].isin(arch_recommended_ids)]
+                arch_engagement_in_recommendations[arch] = {
+                    'mean_engagement': float(arch_recommended_content['engagement_score'].mean()),
+                    'mean_views': float(arch_recommended_content['total_views'].mean()),
+                    'mean_likes': float(arch_recommended_content['total_likes'].mean())
+                }
+
+        results['architecture_engagement_in_recommendations'] = arch_engagement_in_recommendations
+
+        print("\nEngagement of Recommended Content by Architecture:")
+        for arch, metrics in arch_engagement_in_recommendations.items():
+            print(f"  {arch}:")
+            print(f"    Mean Engagement: {metrics['mean_engagement']:.2f}")
+            print(f"    Mean Views: {metrics['mean_views']:.2f}")
+            print(f"    Mean Likes: {metrics['mean_likes']:.2f}")
+
+        return results
+
+    # =================================================================
     # VISUALIZATION
     # =================================================================
 
@@ -636,6 +972,146 @@ class ScenarioAnalyzer:
         print(f"✓ Saved architecture_comparison.png")
         plt.close()
 
+        # 4. Recommendation-Topic-Engagement Correlations
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+        # Topic recommendation frequency
+        topic_rec_counts = {}
+        for round_str, feeds in self.feed_assignments.items():
+            for user_id, content_ids in feeds.items():
+                for content_id in content_ids:
+                    content_row = self.content_df[self.content_df['id'] == content_id]
+                    if not content_row.empty:
+                        topic = content_row.iloc[0]['topic']
+                        topic_rec_counts[topic] = topic_rec_counts.get(topic, 0) + 1
+
+        if topic_rec_counts:
+            topics = list(topic_rec_counts.keys())
+            counts = list(topic_rec_counts.values())
+            axes[0, 0].bar(topics, counts)
+            axes[0, 0].set_title('Topic Recommendation Frequency')
+            axes[0, 0].set_xlabel('Topic')
+            axes[0, 0].set_ylabel('Number of Recommendations')
+            axes[0, 0].tick_params(axis='x', rotation=45)
+
+        # Engagement by topic
+        topic_engagement = self.content_df.groupby('topic')['engagement_score'].mean().sort_values(ascending=False)
+        topic_engagement.plot(kind='bar', ax=axes[0, 1])
+        axes[0, 1].set_title('Average Engagement by Topic')
+        axes[0, 1].set_xlabel('Topic')
+        axes[0, 1].set_ylabel('Average Engagement Score')
+        axes[0, 1].tick_params(axis='x', rotation=45)
+
+        # Topic vs engagement scatter
+        topic_stats = []
+        for topic in self.content_df['topic'].unique():
+            topic_content = self.content_df[self.content_df['topic'] == topic]
+            rec_count = topic_rec_counts.get(topic, 0)
+            avg_engagement = topic_content['engagement_score'].mean()
+            topic_stats.append({'topic': topic, 'rec_count': rec_count, 'engagement': avg_engagement})
+
+        topic_stats_df = pd.DataFrame(topic_stats)
+        if len(topic_stats_df) > 0:
+            axes[1, 0].scatter(topic_stats_df['rec_count'], topic_stats_df['engagement'])
+            for _, row in topic_stats_df.iterrows():
+                axes[1, 0].annotate(row['topic'], (row['rec_count'], row['engagement']),
+                                   fontsize=8, alpha=0.7)
+            axes[1, 0].set_title('Recommendation Frequency vs Engagement')
+            axes[1, 0].set_xlabel('Recommendation Count')
+            axes[1, 0].set_ylabel('Average Engagement Score')
+
+        # Views by topic
+        topic_views = self.content_df.groupby('topic')['total_views'].mean().sort_values(ascending=False)
+        topic_views.plot(kind='bar', ax=axes[1, 1])
+        axes[1, 1].set_title('Average Views by Topic')
+        axes[1, 1].set_xlabel('Topic')
+        axes[1, 1].set_ylabel('Average Views')
+        axes[1, 1].tick_params(axis='x', rotation=45)
+
+        plt.tight_layout()
+        plt.savefig(save_dir / 'recommendation_topic_engagement.png', dpi=300, bbox_inches='tight')
+        print(f"✓ Saved recommendation_topic_engagement.png")
+        plt.close()
+
+        # 5. LLM Favoritism Analysis (only for mixed scenarios)
+        architectures = self.content_df['llm_architecture'].unique()
+        if len(architectures) > 1:
+            fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+
+            # Content generation distribution (baseline)
+            content_by_arch = self.content_df['llm_architecture'].value_counts()
+            axes[0, 0].bar(content_by_arch.index, content_by_arch.values)
+            axes[0, 0].set_title('Content Generation by Architecture (Baseline)')
+            axes[0, 0].set_xlabel('Architecture')
+            axes[0, 0].set_ylabel('Number of Content Items')
+            axes[0, 0].tick_params(axis='x', rotation=45)
+
+            # Recommendation distribution
+            recommended_content_ids = []
+            for round_str, feeds in self.feed_assignments.items():
+                for user_id, content_ids in feeds.items():
+                    recommended_content_ids.extend(content_ids)
+
+            recommended_arch_counts = Counter()
+            for content_id in recommended_content_ids:
+                content_row = self.content_df[self.content_df['id'] == content_id]
+                if not content_row.empty:
+                    arch = content_row.iloc[0]['llm_architecture']
+                    recommended_arch_counts[arch] += 1
+
+            if recommended_arch_counts:
+                axes[0, 1].bar(recommended_arch_counts.keys(), recommended_arch_counts.values())
+                axes[0, 1].set_title('Recommendation Distribution by Architecture')
+                axes[0, 1].set_xlabel('Architecture')
+                axes[0, 1].set_ylabel('Number of Recommendations')
+                axes[0, 1].tick_params(axis='x', rotation=45)
+
+            # Favoritism bias
+            total_content = len(self.content_df)
+            baseline_proportions = {arch: count/total_content for arch, count in content_by_arch.items()}
+            total_recommendations = sum(recommended_arch_counts.values())
+            recommendation_proportions = {
+                arch: count/total_recommendations
+                for arch, count in recommended_arch_counts.items()
+            }
+            favoritism_bias = {
+                arch: recommendation_proportions.get(arch, 0) - baseline_proportions.get(arch, 0)
+                for arch in architectures
+            }
+
+            axes[1, 0].bar(favoritism_bias.keys(), [v*100 for v in favoritism_bias.values()])
+            axes[1, 0].axhline(y=0, color='r', linestyle='--', alpha=0.5)
+            axes[1, 0].set_title('Favoritism Bias (% Recommended - % Generated)')
+            axes[1, 0].set_xlabel('Architecture')
+            axes[1, 0].set_ylabel('Bias (%)')
+            axes[1, 0].tick_params(axis='x', rotation=45)
+
+            # Engagement of recommended content by architecture
+            arch_engagement = {}
+            for arch in architectures:
+                arch_recommended_ids = [
+                    content_id for content_id in recommended_content_ids
+                    if not self.content_df[self.content_df['id'] == content_id].empty
+                    and self.content_df[self.content_df['id'] == content_id].iloc[0]['llm_architecture'] == arch
+                ]
+                if arch_recommended_ids:
+                    arch_recommended_content = self.content_df[self.content_df['id'].isin(arch_recommended_ids)]
+                    arch_engagement[arch] = arch_recommended_content['engagement_score'].mean()
+
+            if arch_engagement:
+                axes[1, 1].bar(arch_engagement.keys(), arch_engagement.values())
+                axes[1, 1].set_title('Average Engagement of Recommended Content')
+                axes[1, 1].set_xlabel('Architecture')
+                axes[1, 1].set_ylabel('Average Engagement Score')
+                axes[1, 1].tick_params(axis='x', rotation=45)
+
+            plt.tight_layout()
+            plt.savefig(save_dir / 'llm_favoritism_analysis.png', dpi=300, bbox_inches='tight')
+            print(f"✓ Saved llm_favoritism_analysis.png")
+            plt.close()
+        else:
+            print(f"✓ Skipped llm_favoritism_analysis.png (single architecture scenario)")
+
         print(f"\nAll visualizations saved to {save_dir}/")
 
     # =================================================================
@@ -647,21 +1123,7 @@ class ScenarioAnalyzer:
         Recursively sanitize data for JSON serialization.
         Converts tuple keys to strings and handles numpy/pandas types.
         """
-        if isinstance(obj, dict):
-            return {
-                str(k) if isinstance(k, tuple) else k: self._sanitize_for_json(v)
-                for k, v in obj.items()
-            }
-        elif isinstance(obj, (list, tuple)):
-            return [self._sanitize_for_json(item) for item in obj]
-        elif isinstance(obj, (np.integer, np.floating)):
-            return float(obj)
-        elif isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif pd.isna(obj):
-            return None
-        else:
-            return obj
+        return sanitize_for_json(obj)
 
     def run_full_analysis(self, save_results: bool = True) -> Dict:
         """Run complete analysis suite."""
@@ -677,6 +1139,8 @@ class ScenarioAnalyzer:
         all_results['engagement_patterns'] = self.analyze_engagement_patterns()
         all_results['polarization'] = self.analyze_polarization()
         all_results['architecture_effects'] = self.analyze_architecture_effects()
+        all_results['recommendation_topic_engagement'] = self.analyze_recommendation_topic_engagement_correlations()
+        all_results['llm_favoritism'] = self.analyze_llm_favoritism_in_recommendations()
 
         # Create visualizations
         self.create_visualizations()
@@ -759,9 +1223,213 @@ def compare_scenarios(scenario1_dir: str, scenario2_dir: str, output_dir: str = 
     # Save comparison
     comparison_file = output_path / "scenario_comparison.json"
     with open(comparison_file, 'w') as f:
-        json.dump(comparison, f, indent=2, default=str)
+        # Convert any tuple keys to strings before JSON serialization
+        comparison_serializable = sanitize_for_json(comparison)
+        json.dump(comparison_serializable, f, indent=2, default=str)
 
     print(f"\n✓ Comparison saved to {comparison_file}")
+
+    return comparison
+
+
+def compare_multiple_scenarios(scenario_dirs: List[str], scenario_names: List[str] = None,
+                              output_dir: str = "./multi_comparison_results"):
+    """
+    Compare multiple scenarios side-by-side.
+
+    Args:
+        scenario_dirs: List of output directories for each scenario
+        scenario_names: Optional list of names for each scenario (for display)
+        output_dir: Where to save comparison results
+    """
+    print("\n" + "="*70)
+    print("COMPARING MULTIPLE SCENARIOS")
+    print("="*70)
+
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True)
+
+    # Analyze all scenarios
+    analyzers = []
+    results_list = []
+
+    if scenario_names is None:
+        scenario_names = [f"Scenario {i+1}" for i in range(len(scenario_dirs))]
+
+    for i, scenario_dir in enumerate(scenario_dirs):
+        print(f"\n### Analyzing {scenario_names[i]} ###")
+        analyzer = ScenarioAnalyzer(scenario_dir)
+        results = analyzer.run_full_analysis(save_results=True)
+        analyzers.append(analyzer)
+        results_list.append(results)
+
+    # Create comprehensive comparison report
+    comparison = {
+        'scenarios': [
+            {
+                'name': scenario_names[i],
+                'path': scenario_dirs[i],
+                'results': results_list[i]
+            }
+            for i in range(len(scenario_dirs))
+        ],
+        'comparison_summary': {}
+    }
+
+    # Key comparisons
+    print("\n" + "="*70)
+    print("MULTI-SCENARIO COMPARISON SUMMARY")
+    print("="*70)
+
+    # Content diversity comparison
+    print("\n1. Content Diversity:")
+    print(f"{'Scenario':<30} {'Topic Entropy':<15} {'Semantic Diversity':<20}")
+    print("-" * 70)
+    for i, results in enumerate(results_list):
+        topic_entropy = results['content_diversity']['topic_entropy']
+        semantic_div = results['content_diversity'].get('semantic_diversity', 'N/A')
+        if semantic_div != 'N/A':
+            print(f"{scenario_names[i]:<30} {topic_entropy:<15.3f} {semantic_div:<20.3f}")
+        else:
+            print(f"{scenario_names[i]:<30} {topic_entropy:<15.3f} {'N/A':<20}")
+
+    # Engagement comparison
+    print("\n2. Engagement:")
+    print(f"{'Scenario':<30} {'Gini Coefficient':<20}")
+    print("-" * 70)
+    for i, results in enumerate(results_list):
+        gini = results['engagement_patterns']['engagement_gini']
+        print(f"{scenario_names[i]:<30} {gini:<20.3f}")
+
+    # Polarization comparison
+    print("\n3. Polarization:")
+    print(f"{'Scenario':<30} {'Polarization Index':<20}")
+    print("-" * 70)
+    for i, results in enumerate(results_list):
+        pol_index = results['polarization'].get('polarization_index', 'N/A')
+        if pol_index != 'N/A':
+            print(f"{scenario_names[i]:<30} {pol_index:<20.3f}")
+        else:
+            print(f"{scenario_names[i]:<30} {'N/A':<20}")
+
+    # Recommendation-Topic-Engagement correlations
+    print("\n4. Recommendation-Topic-Engagement Correlations:")
+    print(f"{'Scenario':<30} {'Rec↔Engagement':<20} {'Rec↔Views':<15} {'Rec↔Likes':<15}")
+    print("-" * 70)
+    for i, results in enumerate(results_list):
+        if 'recommendation_topic_engagement' in results:
+            corr_eng = results['recommendation_topic_engagement'].get('correlation_rec_engagement', 'N/A')
+            corr_views = results['recommendation_topic_engagement'].get('correlation_rec_views', 'N/A')
+            corr_likes = results['recommendation_topic_engagement'].get('correlation_rec_likes', 'N/A')
+
+            corr_eng_str = f"{corr_eng:.3f}" if corr_eng != 'N/A' and corr_eng is not None else 'N/A'
+            corr_views_str = f"{corr_views:.3f}" if corr_views != 'N/A' and corr_views is not None else 'N/A'
+            corr_likes_str = f"{corr_likes:.3f}" if corr_likes != 'N/A' and corr_likes is not None else 'N/A'
+
+            print(f"{scenario_names[i]:<30} {corr_eng_str:<20} {corr_views_str:<15} {corr_likes_str:<15}")
+        else:
+            print(f"{scenario_names[i]:<30} {'N/A':<20} {'N/A':<15} {'N/A':<15}")
+
+    # LLM Favoritism (only for mixed scenarios)
+    print("\n5. LLM Favoritism in Recommendations (Mixed Scenarios Only):")
+    for i, results in enumerate(results_list):
+        if 'llm_favoritism' in results and results['llm_favoritism'].get('is_mixed_scenario', False):
+            print(f"\n{scenario_names[i]}:")
+            favoritism_bias = results['llm_favoritism']['favoritism_bias']
+            for arch, bias in favoritism_bias.items():
+                print(f"  {arch}: {bias:+.1%} bias")
+
+            if 'chi2_pvalue' in results['llm_favoritism']:
+                p_value = results['llm_favoritism']['chi2_pvalue']
+                significance = "Significant" if p_value < 0.05 else "Not significant"
+                print(f"  Statistical test: p={p_value:.4f} ({significance})")
+        else:
+            print(f"\n{scenario_names[i]}: Single-architecture scenario (no favoritism analysis)")
+
+    # Architecture performance comparison
+    print("\n6. Architecture Performance:")
+    for i, results in enumerate(results_list):
+        print(f"\n{scenario_names[i]}:")
+        if 'architecture_performance' in results['architecture_effects']:
+            arch_perf = results['architecture_effects']['architecture_performance']
+            for arch in arch_perf.get('engagement_score', {}).get('mean', {}).keys():
+                mean_eng = arch_perf['engagement_score']['mean'].get(arch, 0)
+                mean_views = arch_perf['total_views']['mean'].get(arch, 0)
+                mean_likes = arch_perf['total_likes']['mean'].get(arch, 0)
+                print(f"  {arch}:")
+                print(f"    Avg Engagement: {mean_eng:.2f}")
+                print(f"    Avg Views: {mean_views:.2f}")
+                print(f"    Avg Likes: {mean_likes:.2f}")
+
+    # Create comparative visualizations
+    print("\n" + "="*70)
+    print("CREATING COMPARATIVE VISUALIZATIONS")
+    print("="*70)
+
+    # 1. Compare key metrics across scenarios
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle('Multi-Scenario Comparison', fontsize=16)
+
+    # Topic entropy
+    topic_entropies = [r['content_diversity']['topic_entropy'] for r in results_list]
+    axes[0, 0].bar(scenario_names, topic_entropies)
+    axes[0, 0].set_title('Topic Entropy')
+    axes[0, 0].set_ylabel('Entropy')
+    axes[0, 0].tick_params(axis='x', rotation=45)
+
+    # Engagement Gini
+    gini_coeffs = [r['engagement_patterns']['engagement_gini'] for r in results_list]
+    axes[0, 1].bar(scenario_names, gini_coeffs)
+    axes[0, 1].set_title('Engagement Gini Coefficient')
+    axes[0, 1].set_ylabel('Gini')
+    axes[0, 1].tick_params(axis='x', rotation=45)
+
+    # Polarization index
+    pol_indices = [r['polarization'].get('polarization_index', 0) for r in results_list]
+    axes[0, 2].bar(scenario_names, pol_indices)
+    axes[0, 2].set_title('Polarization Index')
+    axes[0, 2].set_ylabel('Index')
+    axes[0, 2].tick_params(axis='x', rotation=45)
+
+    # Filter bubble scores
+    filter_bubbles = [r['promotion_patterns']['avg_filter_bubble_score'] for r in results_list]
+    axes[1, 0].bar(scenario_names, filter_bubbles)
+    axes[1, 0].set_title('Filter Bubble Score (HHI)')
+    axes[1, 0].set_ylabel('HHI')
+    axes[1, 0].tick_params(axis='x', rotation=45)
+
+    # Topic diversity in feeds
+    topic_diversities = []
+    for r in results_list:
+        if 'recommendation_topic_engagement' in r:
+            topic_diversities.append(r['recommendation_topic_engagement']['overall_avg_topic_diversity'])
+        else:
+            topic_diversities.append(0)
+
+    axes[1, 1].bar(scenario_names, topic_diversities)
+    axes[1, 1].set_title('Topic Diversity in User Feeds')
+    axes[1, 1].set_ylabel('Entropy')
+    axes[1, 1].tick_params(axis='x', rotation=45)
+
+    # Echo chamber rate
+    echo_rates = [r['engagement_patterns'].get('echo_chamber_rate', 0) for r in results_list]
+    axes[1, 2].bar(scenario_names, [r*100 for r in echo_rates])
+    axes[1, 2].set_title('Echo Chamber Rate')
+    axes[1, 2].set_ylabel('Rate (%)')
+    axes[1, 2].tick_params(axis='x', rotation=45)
+
+    plt.tight_layout()
+    plt.savefig(output_path / 'multi_scenario_comparison.png', dpi=300, bbox_inches='tight')
+    print(f"✓ Saved multi_scenario_comparison.png")
+    plt.close()
+
+    # Save comparison report
+    comparison_file = output_path / "multi_scenario_comparison.json"
+    comparison_serializable = sanitize_for_json(comparison)
+    with open(comparison_file, 'w') as f:
+        json.dump(comparison_serializable, f, indent=2, default=str)
+
+    print(f"\n✓ Multi-scenario comparison saved to {comparison_file}")
 
     return comparison
 
@@ -770,16 +1438,31 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Analyze simulation scenarios")
-    parser.add_argument("--output-dir", type=str, required=True,
-                       help="Directory containing simulation outputs")
+    parser.add_argument("--output-dir", type=str,
+                       help="Directory containing simulation outputs (for single scenario analysis)")
     parser.add_argument("--compare", type=str, help="Second scenario directory for comparison")
+    parser.add_argument("--multi-compare", nargs='+',
+                       help="Multiple scenario directories for comparison (space-separated)")
+    parser.add_argument("--scenario-names", nargs='+',
+                       help="Optional names for scenarios in multi-compare (space-separated)")
 
     args = parser.parse_args()
 
-    if args.compare:
+    if args.multi_compare:
+        # Compare multiple scenarios
+        scenario_names = args.scenario_names if args.scenario_names else None
+        compare_multiple_scenarios(args.multi_compare, scenario_names)
+    elif args.compare and args.output_dir:
         # Compare two scenarios
         compare_scenarios(args.output_dir, args.compare)
-    else:
+    elif args.output_dir:
         # Analyze single scenario
         analyzer = ScenarioAnalyzer(args.output_dir)
         analyzer.run_full_analysis()
+    else:
+        parser.print_help()
+        print("\nExamples:")
+        print("  Single scenario: python analyze_scenarios.py --output-dir ./scenario1_output")
+        print("  Two scenarios: python analyze_scenarios.py --output-dir ./scenario1_output --compare ./scenario2_output")
+        print("  Multiple scenarios: python analyze_scenarios.py --multi-compare ./scenario1_output ./scenario2_output ./scenario3_output")
+        print("  With names: python analyze_scenarios.py --multi-compare ./s1 ./s2 ./s3 --scenario-names 'Llama Only' 'Mixed' 'Mistral Only'")

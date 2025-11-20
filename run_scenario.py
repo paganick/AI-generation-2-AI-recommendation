@@ -255,8 +255,8 @@ def run_scenario(config: MultiLLMConfig, n_rounds: int = 10, n_users: int = 20,
 
 def main():
     parser = argparse.ArgumentParser(description="Run AI content generation scenarios")
-    parser.add_argument("--scenario", type=int, choices=[1, 2], required=True,
-                       help="Scenario number (1 or 2)")
+    parser.add_argument("--scenario", type=int, choices=[1, 2, 3, 4], required=True,
+                       help="Scenario number (1-4)")
     parser.add_argument("--rounds", type=int, default=10,
                        help="Number of simulation rounds (default: 10)")
     parser.add_argument("--users", type=int, default=20,
@@ -267,13 +267,14 @@ def main():
     args = parser.parse_args()
 
     # Load appropriate configuration
-    if args.scenario == 1:
-        config_file = "scenario1_llama_only.json"
-        default_output = "./scenario1_output"
-    else:
-        config_file = "scenario2_mixed_generation.json"
-        default_output = "./scenario2_output"
+    scenario_configs = {
+        1: ("scenario1_llama_only.json", "./scenario1_output"),
+        2: ("scenario2_mixed_generation.json", "./scenario2_output"),
+        3: ("scenario3_mistral_only.json", "./scenario3_output"),
+        4: ("scenario4_mixed_mistral_rec.json", "./scenario4_output")
+    }
 
+    config_file, default_output = scenario_configs[args.scenario]
     output_dir = args.output if args.output else default_output
 
     print(f"Loading configuration from {config_file}...")
@@ -290,6 +291,8 @@ def main():
     print(f"\n{'='*70}")
     print("TO ANALYZE RESULTS, RUN:")
     print(f"  python analyze_scenarios.py --output-dir {output_dir}")
+    print("\nTO COMPARE MULTIPLE SCENARIOS, RUN:")
+    print("  python analyze_scenarios.py --multi-compare ./scenario1_output ./scenario2_output ./scenario3_output ./scenario4_output")
     print("="*70)
 
 
