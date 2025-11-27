@@ -1,0 +1,732 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning}
+
+\geometry{margin=1in}
+
+\title{Multi-LLM Social Media Simulation Architecture:\\
+A Technical Specification}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document provides a comprehensive technical specification of a social media simulation platform that models content generation, recommendation, and user interaction using multiple Large Language Models (LLMs). The system simulates realistic social media dynamics by employing different LLM architectures for content generation and recommendations, enabling analysis of architectural effects on information spread, polarization, and engagement patterns.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{System Overview}
+
+The simulation platform consists of five core components that interact in a cyclical fashion over discrete time rounds:
+
+\begin{enumerate}
+    \item \textbf{LLM Backend Manager}: Manages multiple LLM instances with different architectures
+    \item \textbf{AI Agent System}: AI agents that generate social media content
+    \item \textbf{Recommendation System}: Ranks and filters content for users (LLM-based or traditional)
+    \item \textbf{User Simulation}: Simulates human users with interests and opinions
+    \item \textbf{Data Tracker}: Records all interactions for analysis
+\end{enumerate}
+
+\subsection{Simulation Loop}
+
+Each simulation runs for $N$ rounds, where each round consists of:
+
+\begin{equation}
+\text{Round}_i: \text{Generate} \rightarrow \text{Recommend} \rightarrow \text{Interact} \rightarrow \text{Track}
+\end{equation}
+
+\section{Platform Initialization}
+
+\subsection{LLM Backend Configuration}
+
+The platform supports multiple LLM architectures running simultaneously. Each backend is configured with:
+
+\begin{itemize}
+    \item \textbf{Backend ID}: Unique identifier (e.g., \texttt{"llama\_backend"}, \texttt{"mistral\_backend"})
+    \item \textbf{Architecture Type}: LLM family (e.g., \texttt{"llama"}, \texttt{"mistral"}, \texttt{"gpt"})
+    \item \textbf{Model Name}: Specific model (e.g., \texttt{"meta-llama/Llama-3.1-8B-Instruct"})
+    \item \textbf{Mock Mode}: Boolean flag for testing without actual LLM inference
+\end{itemize}
+
+\textbf{Initialization Process:}
+
+\begin{lstlisting}[language=Python, basicstyle=\small\ttfamily]
+backend_config = {
+    'llama_backend': {
+        'type': 'llama',
+        'model': 'meta-llama/Llama-3.1-8B-Instruct',
+        'use_mock': False
+    },
+    'mistral_backend': {
+        'type': 'mistral',
+        'model': 'mistralai/Mistral-7B-Instruct-v0.2',
+        'use_mock': False
+    }
+}
+
+backend_manager = create_multi_llm_setup(backend_config)
+\end{lstlisting}
+
+The \texttt{MultiLLMManager} class maintains a registry:
+\begin{equation}
+\mathcal{B} = \{b_1, b_2, \ldots, b_k\} \quad \text{where } b_i \text{ is a backend instance}
+\end{equation}
+
+Each backend loads its model using HuggingFace Transformers:
+\begin{lstlisting}[language=Python, basicstyle=\small\ttfamily]
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(
+    model_name,
+    torch_dtype=torch.float16,
+    device_map="auto"
+)
+\end{lstlisting}
+
+\subsection{Agent Initialization}
+
+AI agents are created with the following attributes:
+
+\begin{itemize}
+    \item \textbf{Agent ID}: Unique identifier (e.g., \texttt{"agent\_0"})
+    \item \textbf{Persona}: Character description (e.g., \textit{"Progressive environmental activist"})
+    \item \textbf{Objective}: Content goal (e.g., \textit{"Raise awareness about climate change"})
+    \item \textbf{Temperature}: Sampling temperature $\in [0, 1]$
+    \item \textbf{Response Style}: Tone (e.g., \texttt{"analytical"}, \texttt{"passionate"})
+    \item \textbf{Backend Assignment}: Which LLM backend this agent uses
+\end{itemize}
+
+Formally, an agent $a_j$ is a tuple:
+\begin{equation}
+a_j = (\text{id}_j, \text{persona}_j, \text{objective}_j, \tau_j, \text{style}_j, b_{\text{assigned}})
+\end{equation}
+
+where $\tau_j$ is temperature and $b_{\text{assigned}} \in \mathcal{B}$ is the assigned backend.
+
+\subsection{User Initialization}
+
+Simulated users are created with:
+
+\begin{itemize}
+    \item \textbf{User ID}: Unique identifier (e.g., \texttt{"user\_0"})
+    \item \textbf{Interests}: List of topics (e.g., \texttt{["climate change", "environment"]})
+    \item \textbf{Opinion Vector}: $\mathbf{o}_u \in [-1, 1]^d$ (currently $d=1$)
+    \item \textbf{Tolerance}: $\delta_u \in [0, 1]$ (bounded confidence threshold)
+\end{itemize}
+
+A user $u$ is represented as:
+\begin{equation}
+u = (\text{id}_u, I_u, \mathbf{o}_u, \delta_u)
+\end{equation}
+
+where $I_u$ is the set of interests.
+
+\subsection{Data Tracker Initialization}
+
+The \texttt{EnhancedDataTracker} maintains the following data structures:
+
+\begin{itemize}
+    \item \textbf{Content Pool}: $\mathcal{C} = \{c_1, c_2, \ldots\}$ - all content items
+    \item \textbf{Agents Registry}: $\mathcal{A} = \{a_1, a_2, \ldots\}$
+    \item \textbf{Users Registry}: $\mathcal{U} = \{u_1, u_2, \ldots\}$
+    \item \textbf{Interactions}: $\mathcal{I} = \{\iota_1, \iota_2, \ldots\}$ - user-content interactions
+    \item \textbf{Feed Assignments}: $\mathcal{F}_r: \mathcal{U} \rightarrow 2^{\mathcal{C}}$ for each round $r$
+\end{itemize}
+
+\section{Agent Content Generation}
+
+\subsection{Content Generation Prompt Structure}
+
+When an agent generates content, the system constructs a prompt:
+
+\begin{lstlisting}[basicstyle=\small\ttfamily, breaklines=true]
+You are a social media user with the following characteristics:
+Persona: {agent.persona}
+Objective: {agent.objective}
+Style: {agent.response_style}
+
+Write a social media post (2-3 sentences) about: {topic}
+
+Post:
+\end{lstlisting}
+
+This prompt is sent to the agent's assigned LLM backend.
+
+\subsection{LLM Generation Process}
+
+The backend performs the following steps:
+
+\begin{enumerate}
+    \item \textbf{Tokenization}: Convert prompt to token IDs
+    \begin{equation}
+    \text{tokens} = \text{Tokenizer}(\text{prompt})
+    \end{equation}
+
+    \item \textbf{Generation}: Use the model to generate new tokens
+    \begin{lstlisting}[language=Python, basicstyle=\small\ttfamily]
+outputs = model.generate(
+    input_ids=tokens,
+    max_new_tokens=150,
+    temperature=agent.temperature,
+    top_p=0.9,
+    do_sample=True
+)
+    \end{lstlisting}
+
+    \item \textbf{Decoding}: Convert token IDs back to text
+    \begin{equation}
+    \text{text} = \text{Tokenizer.decode}(\text{outputs})
+    \end{equation}
+
+    \item \textbf{Post-processing}: Clean the response
+    \begin{itemize}
+        \item Remove special tokens
+        \item Truncate to 3-4 sentences
+        \item Strip whitespace
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Content Item Structure}
+
+Each generated content item $c$ contains:
+
+\begin{align}
+c = \{&\text{id}, \text{author\_id}, \text{text}, \text{timestamp}, \\
+      &\text{round\_created}, \text{parent\_id}, \text{topic}, \\
+      &\text{sentiment\_score}, \text{engagement\_score}, \\
+      &\text{total\_views}, \text{total\_likes}, \\
+      &\text{llm\_architecture}, \text{llm\_model}\}
+\end{align}
+
+The \texttt{llm\_architecture} field tracks which LLM family generated this content (crucial for analysis).
+
+\subsection{Generation Triggers}
+
+Content generation occurs in two contexts:
+
+\subsubsection{Initial Posts (Round-based)}
+
+At each round $r$, the system:
+\begin{enumerate}
+    \item Selects topics $T = \{t_1, t_2, \ldots, t_k\}$
+    \item Randomly selects agents to post about each topic
+    \item Each agent generates content using their assigned backend
+\end{enumerate}
+
+Number of posts per round:
+\begin{equation}
+N_{\text{posts}} = |T| \times n_{\text{agents\_per\_topic}}
+\end{equation}
+
+\subsubsection{Response Generation}
+
+Agents probabilistically respond to existing content:
+\begin{itemize}
+    \item Post new content: 30\% probability
+    \item Respond to engaging content: 50\% probability (if available)
+    \item Stay quiet: 20\% probability
+\end{itemize}
+
+For responses, the prompt structure is:
+
+\begin{lstlisting}[basicstyle=\small\ttfamily, breaklines=true]
+You are a social media user with the following characteristics:
+Persona: {agent.persona}
+Objective: {agent.objective}
+Style: {agent.response_style}
+
+Someone posted: "{target.text}"
+
+Write a brief response (2-3 sentences):
+
+Response:
+\end{lstlisting}
+
+\subsection{Sentiment Annotation}
+
+After generation, sentiment scores are computed using keyword matching:
+
+\begin{equation}
+s(c) = \frac{n_{\text{positive}} - n_{\text{negative}}}{|\text{words}(c)|} \in [-1, 1]
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $n_{\text{positive}}$: count of positive keywords
+    \item $n_{\text{negative}}$: count of negative keywords
+    \item $|\text{words}(c)|$: total word count
+\end{itemize}
+
+\section{Recommendation System}
+
+The platform supports two recommendation strategies: traditional keyword-based and LLM-based.
+
+\subsection{Traditional Recommender}
+
+Uses simple relevance scoring:
+
+\begin{equation}
+\text{score}(c, u) = \sum_{i \in I_u} \mathbb{1}[i \in \text{text}(c)] + 0.1 \cdot \text{engagement}(c)
+\end{equation}
+
+where $\mathbb{1}[\cdot]$ is the indicator function.
+
+\subsection{LLM-based Recommender}
+
+This is the more sophisticated approach used in the simulation.
+
+\subsubsection{Recommendation Prompt Construction}
+
+The LLM recommender constructs a detailed prompt containing:
+
+\begin{enumerate}
+    \item \textbf{User Profile}
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+# USER PROFILE
+User interests: climate change, environment, sustainability
+    \end{lstlisting}
+
+    \item \textbf{User History} (if personalization enabled)
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+# USER INTERACTION HISTORY
+Recently liked content:
+  1. "Climate action is urgent... [topic: climate change]"
+  2. "Renewable energy solutions... [topic: technology]"
+    \end{lstlisting}
+
+    \item \textbf{Content Pool} (sampled for context limits)
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+# CONTENT TO RANK
+Rank the following 20 posts for this user.
+
+1. "Climate change requires immediate action..."
+   [topic: climate change, engagement: 5.2]
+2. "New AI technology promises to revolutionize..."
+   [topic: technology, engagement: 3.1]
+...
+    \end{lstlisting}
+
+    \item \textbf{Task Instruction}
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+# TASK
+Rank these posts from most to least relevant for this user.
+Return ONLY a comma-separated list of numbers (e.g., "3,1,5,2,4").
+Return the top 10 most relevant posts.
+
+Ranking:
+    \end{lstlisting}
+\end{enumerate}
+
+\subsubsection{Content Pool Sampling}
+
+To manage LLM context limits, the system samples up to 20 items from the full content pool:
+
+\begin{equation}
+\mathcal{C}_{\text{sample}} = \mathcal{C}_{\text{recent}} \cup \mathcal{C}_{\text{popular}}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathcal{C}_{\text{recent}}$: Top 10 by timestamp
+    \item $\mathcal{C}_{\text{popular}}$: Top 10 by engagement score
+\end{itemize}
+
+\subsubsection{LLM Ranking Generation}
+
+The recommender LLM generates a ranking with low temperature ($\tau = 0.3$) for consistency:
+
+\begin{lstlisting}[language=Python, basicstyle=\small\ttfamily]
+response = llm_backend.generate(
+    prompt=ranking_prompt,
+    temperature=0.3
+)
+\end{lstlisting}
+
+Expected output format:
+\begin{lstlisting}[basicstyle=\small\ttfamily]
+3,1,15,7,2,11,5,18,9,4
+\end{lstlisting}
+
+\subsubsection{Output Parsing}
+
+The system parses the LLM response to extract rankings:
+
+\begin{enumerate}
+    \item Extract all numbers using regex: \texttt{re.findall(r'\textbackslash d+', response)}
+    \item Convert to 0-indexed positions: $\text{idx} = n - 1$
+    \item Validate indices are within bounds: $0 \leq \text{idx} < |\mathcal{C}_{\text{sample}}|$
+    \item Map to actual content items
+    \item If parsing fails, fallback to first $k$ items
+\end{enumerate}
+
+\textbf{Robustness}: The parser handles various output formats:
+\begin{itemize}
+    \item With/without commas: \texttt{"1,2,3"} or \texttt{"1 2 3"}
+    \item With additional text: \texttt{"Here is the ranking: 1,2,3"}
+    \item Partial responses: If fewer than $k$ items, pad with remaining content
+\end{itemize}
+
+\subsubsection{Personalization}
+
+When \texttt{use\_personalization=True}, the recommender includes:
+
+\begin{equation}
+\text{history}(u) = \{c \in \mathcal{C} : (u, c, \text{liked}=\text{True}) \in \mathcal{I}\}_{-5:}
+\end{equation}
+
+This provides the LLM with context about the user's preferences.
+
+\section{User Interaction Simulation}
+
+\subsection{Feed Assignment}
+
+After recommendation, each user $u$ receives a personalized feed:
+
+\begin{equation}
+\text{feed}(u) = [c_1, c_2, \ldots, c_k] \quad \text{(ranked order)}
+\end{equation}
+
+This is stored in the data tracker:
+\begin{equation}
+\mathcal{F}_r(u) = [\text{id}(c_1), \text{id}(c_2), \ldots, \text{id}(c_k)]
+\end{equation}
+
+\subsection{Viewing and Liking}
+
+For each content item $c$ in $\text{feed}(u)$:
+
+\subsubsection{Viewing}
+Currently, all items in feed are viewed:
+\begin{equation}
+\text{viewed}(c, u) = \text{True} \quad \forall c \in \text{feed}(u)
+\end{equation}
+
+Each view increments:
+\begin{equation}
+\text{total\_views}(c) \leftarrow \text{total\_views}(c) + 1
+\end{equation}
+
+\subsubsection{Liking}
+
+Liking is probabilistic based on opinion alignment:
+
+\begin{equation}
+P(\text{like} | c, u) = \max\left(0, 1 - |\mathbf{o}_u - s(c)|\right)
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\mathbf{o}_u$: user's opinion (currently scalar $\in [-1, 1]$)
+    \item $s(c)$: content sentiment score $\in [-1, 1]$
+\end{itemize}
+
+Implementation:
+\begin{lstlisting}[language=Python, basicstyle=\small\ttfamily]
+opinion_distance = abs(user.opinion_vector[0] - content.sentiment_score)
+like_probability = max(0, 1.0 - opinion_distance)
+liked = random() < like_probability
+\end{lstlisting}
+
+If liked:
+\begin{align}
+\text{total\_likes}(c) &\leftarrow \text{total\_likes}(c) + 1 \\
+\text{engagement\_score}(c) &\leftarrow \text{engagement\_score}(c) + 1
+\end{align}
+
+\subsection{Opinion Dynamics}
+
+User opinions evolve based on bounded confidence model:
+
+\begin{equation}
+\mathbf{o}_u^{(t+1)} = \begin{cases}
+(1-\alpha)\mathbf{o}_u^{(t)} + \alpha \cdot s(c) & \text{if } |\mathbf{o}_u^{(t)} - s(c)| < \delta_u \\
+\mathbf{o}_u^{(t)} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+where:
+\begin{itemize}
+    \item $\alpha = 0.1$: learning rate
+    \item $\delta_u$: user's tolerance threshold
+\end{itemize}
+
+\textbf{Interpretation}: Users are only influenced by content within their tolerance range.
+
+\subsection{Interaction Recording}
+
+Each interaction is recorded as:
+
+\begin{align}
+\iota = \{&\text{user\_id}, \text{content\_id}, \text{round}, \\
+         &\text{rank\_in\_feed}, \text{viewed}, \text{liked}, \\
+         &\text{opinion\_before}, \text{opinion\_after}, \text{timestamp}\}
+\end{align}
+
+This enables granular analysis of:
+\begin{itemize}
+    \item Position bias effects
+    \item Opinion polarization
+    \item Filter bubble formation
+\end{itemize}
+
+\section{Round Structure and Data Flow}
+
+\subsection{Single Round Execution}
+
+A complete simulation round $r$ proceeds as follows:
+
+\begin{enumerate}
+    \item \textbf{Content Generation}
+    \begin{itemize}
+        \item Agents generate initial posts on predefined topics
+        \item Agents probabilistically respond to existing content
+        \item New content added to pool: $\mathcal{C} \leftarrow \mathcal{C} \cup \mathcal{C}_{\text{new}}$
+    \end{itemize}
+
+    \item \textbf{Sentiment Annotation}
+    \begin{equation}
+    \forall c \in \mathcal{C}_{\text{new}}: s(c) \leftarrow \text{compute\_sentiment}(c)
+    \end{equation}
+
+    \item \textbf{Recommendation}
+    \begin{equation}
+    \forall u \in \mathcal{U}: \mathcal{F}_r(u) \leftarrow \text{recommend}(\mathcal{C}, u, k=10)
+    \end{equation}
+
+    \item \textbf{User Interaction}
+    \begin{equation}
+    \forall u \in \mathcal{U}, \forall c \in \mathcal{F}_r(u): \text{simulate\_interaction}(u, c, r)
+    \end{equation}
+
+    \item \textbf{Opinion Update}
+    \begin{equation}
+    \forall u \in \mathcal{U}: \mathbf{o}_u \leftarrow \text{update\_opinion}(u, \mathcal{F}_r(u))
+    \end{equation}
+
+    \item \textbf{Data Recording}
+    \begin{itemize}
+        \item Store content: $\mathcal{C}_{\text{all}} \leftarrow \mathcal{C}_{\text{all}} \cup \mathcal{C}_{\text{new}}$
+        \item Store interactions: $\mathcal{I}_{\text{all}} \leftarrow \mathcal{I}_{\text{all}} \cup \mathcal{I}_r$
+        \item Store feed assignments: $\mathcal{F}_{\text{all}} \leftarrow \mathcal{F}_{\text{all}} \cup \{\mathcal{F}_r\}$
+        \item Store opinions: $\mathcal{O}_r(u) \leftarrow \mathbf{o}_u \quad \forall u \in \mathcal{U}$
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Multi-Round Simulation}
+
+The complete simulation over $N$ rounds:
+
+\begin{equation}
+\text{Simulation}(N) = \bigcup_{r=0}^{N-1} \text{Round}_r
+\end{equation}
+
+\textbf{Cumulative Effects}:
+\begin{itemize}
+    \item Content pool grows: $|\mathcal{C}|$ increases each round
+    \item User opinions evolve: $\mathbf{o}_u^{(0)} \rightarrow \mathbf{o}_u^{(N)}$
+    \item Engagement patterns emerge: popular content gains more visibility
+    \item Network effects: responses create content chains
+\end{itemize}
+
+\subsection{Data Persistence}
+
+At simulation end, the system saves:
+
+\begin{enumerate}
+    \item \textbf{all\_content.csv}: All content items with metadata
+    \begin{itemize}
+        \item Columns: id, author\_id, text, timestamp, round\_created, topic, sentiment\_score, engagement\_score, total\_views, total\_likes, llm\_architecture, llm\_model
+    \end{itemize}
+
+    \item \textbf{all\_interactions.csv}: All user-content interactions
+    \begin{itemize}
+        \item Columns: user\_id, content\_id, round, rank\_in\_feed, viewed, liked, opinion\_before, opinion\_after, timestamp
+    \end{itemize}
+
+    \item \textbf{agents.csv}: Agent metadata
+    \begin{itemize}
+        \item Columns: id, persona, objective, temperature, response\_style, llm\_backend\_id
+    \end{itemize}
+
+    \item \textbf{users.csv}: User metadata and final states
+    \begin{itemize}
+        \item Columns: id, interests, final\_opinion, tolerance, n\_exposures
+    \end{itemize}
+
+    \item \textbf{feed\_assignments.json}: Feed history
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+{
+  "0": {"user_0": ["c_0_1", "c_0_3", ...], ...},
+  "1": {"user_0": ["c_1_2", "c_0_5", ...], ...},
+  ...
+}
+    \end{lstlisting}
+
+    \item \textbf{round\_data.json}: Opinion evolution and content creation
+    \begin{lstlisting}[basicstyle=\small\ttfamily]
+{
+  "user_opinions": {
+    "0": {"user_0": 0.23, "user_1": -0.45, ...},
+    "1": {"user_0": 0.31, "user_1": -0.52, ...},
+    ...
+  }
+}
+    \end{lstlisting}
+\end{enumerate}
+
+\section{Key Design Choices and Rationale}
+
+\subsection{LLM Architecture Tracking}
+
+Every content item stores \texttt{llm\_architecture} and \texttt{llm\_model}, enabling analysis of:
+\begin{itemize}
+    \item \textbf{Architecture favoritism}: Does the recommender prefer content from certain LLMs?
+    \item \textbf{Engagement patterns}: Do users engage more with content from specific architectures?
+    \item \textbf{Echo chambers}: Do LLMs preferentially respond to their own architecture's content?
+\end{itemize}
+
+\subsection{Probabilistic Agent Behavior}
+
+Agents use randomness for action selection (30\% post, 50\% respond, 20\% quiet) to:
+\begin{itemize}
+    \item Simulate realistic activity patterns
+    \item Prevent deterministic content generation
+    \item Allow emergence of organic conversation threads
+\end{itemize}
+
+\subsection{Bounded Confidence Opinion Model}
+
+Users only update opinions for content within tolerance $\delta_u$ because:
+\begin{itemize}
+    \item Models confirmation bias and selective exposure
+    \item Prevents unrealistic opinion swings
+    \item Enables polarization dynamics to emerge naturally
+\end{itemize}
+
+\subsection{LLM-based Recommendation}
+
+Using an LLM for recommendation (rather than just keyword matching) allows:
+\begin{itemize}
+    \item \textbf{Semantic understanding}: Captures meaning beyond keywords
+    \item \textbf{Nuanced ranking}: Can consider tone, style, complexity
+    \item \textbf{Personalization}: Leverages interaction history naturally
+    \item \textbf{Architecture effects}: Different LLMs may have different ranking biases
+\end{itemize}
+
+\subsection{Structured Output Parsing}
+
+The recommendation system uses a constrained output format (\texttt{"1,2,3,..."}):
+\begin{itemize}
+    \item \textbf{Reliability}: Easy to parse with regex
+    \item \textbf{Fallback handling}: Can recover from partial/malformed outputs
+    \item \textbf{Efficiency}: Minimal token usage in responses
+\end{itemize}
+
+\section{Scenario Configurations}
+
+The system supports multiple experimental scenarios by varying:
+
+\begin{enumerate}
+    \item \textbf{Content Generation Architecture Mix}
+    \begin{itemize}
+        \item Homogeneous: All agents use same LLM (e.g., all Llama)
+        \item Heterogeneous: Agents use different LLMs (e.g., 50\% Llama, 50\% Mistral)
+    \end{itemize}
+
+    \item \textbf{Recommendation Architecture}
+    \begin{itemize}
+        \item Fixed: Always use specific LLM (e.g., Llama for recommendation)
+        \item Varying: Use different LLM than content generation
+    \end{itemize}
+
+    \item \textbf{Personalization Level}
+    \begin{itemize}
+        \item No history: Only user interests
+        \item With history: Include recent liked content
+    \end{itemize}
+\end{enumerate}
+
+\textbf{Example Scenarios}:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|l|l|l|}
+\hline
+\textbf{Scenario} & \textbf{Content Gen} & \textbf{Recommender} \\
+\hline
+1 & 100\% Llama & Llama LLM \\
+2 & 50\% Llama, 50\% Mistral & Llama LLM \\
+3 & 100\% Mistral & Mistral LLM \\
+4 & 50\% Llama, 50\% Mistral & Mistral LLM \\
+\hline
+\end{tabular}
+\caption{Example scenario configurations}
+\end{table}
+
+\section{Analysis Capabilities}
+
+The saved data enables rich post-hoc analysis:
+
+\subsection{Content Diversity}
+\begin{itemize}
+    \item Topic entropy: $H(T) = -\sum_t p(t) \log p(t)$
+    \item Semantic similarity between content items
+    \item Diversity trends over rounds
+\end{itemize}
+
+\subsection{Recommendation Bias}
+\begin{itemize}
+    \item Architecture favoritism: Comparing content generation vs. recommendation distributions
+    \item Topic bias: Which topics get recommended more
+    \item Sentiment bias: Positive vs. negative content promotion
+\end{itemize}
+
+\subsection{User Dynamics}
+\begin{itemize}
+    \item Opinion polarization: Variance in final opinions
+    \item Filter bubbles: Content concentration (HHI index)
+    \item Engagement inequality: Gini coefficient
+\end{itemize}
+
+\subsection{Network Effects}
+\begin{itemize}
+    \item Echo chambers: Same-architecture response rates
+    \item Virality cascades: Content with high engagement growth
+    \item Response networks: Parent-child content relationships
+\end{itemize}
+
+\section{Conclusion}
+
+This simulation platform provides a controlled environment for studying how different LLM architectures affect social media dynamics. The key innovations are:
+
+\begin{enumerate}
+    \item \textbf{Multi-LLM Support}: Seamless mixing of different model architectures
+    \item \textbf{LLM-based Recommendation}: Using LLMs for content ranking, not just generation
+    \item \textbf{Comprehensive Tracking}: Recording architecture information at every step
+    \item \textbf{Realistic Interactions}: Probabilistic agents and bounded confidence users
+    \item \textbf{Rich Analysis}: Detailed output data for studying emergent phenomena
+\end{enumerate}
+
+The architecture is modular and extensible, allowing for:
+\begin{itemize}
+    \item New LLM backends (GPT, Claude, Gemini, etc.)
+    \item Alternative recommendation strategies
+    \item More complex opinion dynamics models
+    \item Network-based user interactions
+\end{itemize}
+
+This provides a foundation for rigorous computational social science research on AI-mediated information ecosystems.
+
+\end{document}
