@@ -102,12 +102,32 @@ else
     IFS=',' read -ra EFFECT_DIRS <<< "$EFFECTS"
 fi
 
+# Function to check if a scenario is already completed
+is_scenario_complete() {
+    local output_dir=$1
+
+    # Check for key completion markers
+    if [ -f "$output_dir/all_content.csv" ] && \
+       [ -f "$output_dir/comprehensive_analysis.json" ] && \
+       [ -d "$output_dir/analysis_plots" ]; then
+        return 0  # Complete
+    else
+        return 1  # Not complete
+    fi
+}
+
 # Function to run a single scenario
 run_scenario() {
     local scenario_file=$1
     local effect_type=$2
     local scenario_id=$(basename "$scenario_file" .json)
     local output_dir="$OUTPUT_BASE_DIR/$effect_type/$scenario_id"
+
+    # Check if already completed
+    if is_scenario_complete "$output_dir"; then
+        echo "  ⏭  Skipping (already complete): $effect_type/$scenario_id"
+        return 0
+    fi
 
     echo "Running: $effect_type/$scenario_id"
 

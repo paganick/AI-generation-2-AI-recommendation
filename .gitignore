@@ -7,6 +7,12 @@ __pycache__/
 # Test outputs
 test_*/
 outputs_*/
+*_output/
+*_results/
+*_suite/
+*.html
+*.png
+*_mistral_*.json
 
 # Virtual environments
 venv/
