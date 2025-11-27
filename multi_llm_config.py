@@ -33,8 +33,19 @@ class AgentLLMAssignment:
     temperature: float = 0.7
     response_style: str = "balanced"
 
+    # Optional bias-testing attributes
+    gender: Optional[str] = None
+    dialect: Optional[str] = None
+    political_position: Optional[str] = None
+    topic: Optional[str] = None
+
     def to_dict(self):
-        return asdict(self)
+        # Only include non-None values
+        result = {}
+        for key, value in asdict(self).items():
+            if value is not None:
+                result[key] = value
+        return result
 
 
 @dataclass
@@ -66,7 +77,19 @@ class MultiLLMConfig:
             data = json.load(f)
 
         backends = [LLMBackendConfig(**b) for b in data['backends']]
-        agent_assignments = [AgentLLMAssignment(**a) for a in data['agent_assignments']]
+
+        # Load agent assignments, filtering out any unknown fields
+        agent_assignments = []
+        for a in data['agent_assignments']:
+            # Get valid fields for AgentLLMAssignment
+            valid_fields = {
+                'agent_id', 'backend_id', 'persona', 'objective',
+                'temperature', 'response_style', 'gender', 'dialect',
+                'political_position', 'topic'
+            }
+            # Filter to only include valid fields
+            filtered_data = {k: v for k, v in a.items() if k in valid_fields}
+            agent_assignments.append(AgentLLMAssignment(**filtered_data))
 
         return cls(
             name=data['name'],
